@@ -3,18 +3,18 @@ import tensorflow.contrib.slim as slim
 
 
 @slim.add_arg_scope
-def downsampling_block(inputs, num_internal_outputs, crelu, is_training, scope):
+def downsampling_block(inputs, num_internal_outputs, final, is_training, scope):
     print(scope)
     conv = slim.conv2d(inputs, num_outputs=num_internal_outputs, kernel_size=[3, 3], stride=2, activation_fn=None,
                        scope=scope + '_conv')
     bn = slim.batch_norm(conv, is_training=is_training, scope=scope + '_bn')
     pool = slim.max_pool2d(inputs, kernel_size=[2, 2], stride=2, padding='SAME', scope=scope + '_pool')
 
-    net = tf.concat([bn, pool], axis=3, name=scope + '_concat')
-
-    if crelu:
+    if not final:
+        net = tf.concat([bn, pool], axis=3, name=scope + '_concat')
         net = tf.nn.crelu(net, name=scope + '_crelu')
     else:
+        net = tf.add(bn, pool, name=scope + '_relu')
         net = tf.nn.relu(net, name=scope + '_relu')
 
     print(net.get_shape().as_list())  # 1/2 resolution
@@ -22,29 +22,22 @@ def downsampling_block(inputs, num_internal_outputs, crelu, is_training, scope):
 
 
 @slim.add_arg_scope
-def convolution_block(inputs, bt_output, dilation_rate, is_training, scope):
+def convolution_block(inputs, num_outputs, internal_depth_multiplier, dilation_rate, is_training, scope):
     print(scope)
     previous_block = inputs
 
-    output_depth = inputs.get_shape().as_list()[3]
-
-    net = slim.conv2d(inputs, num_outputs=bt_output, kernel_size=[1, 1], activation_fn=tf.nn.relu, scope=scope + '_bt1')
-
-    net = slim.conv2d(net, num_outputs=bt_output, kernel_size=[3, 1], rate=dilation_rate, activation_fn=tf.nn.relu,
-                      scope=scope + '_conv1_1')
-    net = slim.conv2d(net, num_outputs=bt_output, kernel_size=[1, 3], rate=dilation_rate, activation_fn=tf.nn.crelu,
-                      scope=scope + '_conv1_2')
-
+    net = slim.conv2d(inputs, num_outputs=internal_depth_multiplier * num_outputs, kernel_size=[3, 1],
+                      rate=dilation_rate,
+                      activation_fn=tf.nn.relu, scope=scope + '_conv1_1')
+    net = slim.conv2d(net, num_outputs=internal_depth_multiplier * num_outputs, kernel_size=[1, 3], rate=dilation_rate,
+                      activation_fn=tf.nn.relu, scope=scope + '_conv1_2')
     net = slim.batch_norm(net, is_training=is_training, scope=scope + '_bn_1')
 
-    net = slim.conv2d(net, num_outputs=bt_output * 2, kernel_size=[3, 1], rate=dilation_rate, activation_fn=tf.nn.relu,
+    net = slim.conv2d(net, num_outputs=num_outputs, kernel_size=[3, 1], activation_fn=tf.nn.relu, rate=dilation_rate,
                       scope=scope + '_conv2_1')
-    net = slim.conv2d(net, num_outputs=bt_output * 2, kernel_size=[1, 3], rate=dilation_rate, activation_fn=None,
+    net = slim.conv2d(net, num_outputs=num_outputs, kernel_size=[1, 3], activation_fn=None, rate=dilation_rate,
                       scope=scope + '_conv2_2')
-
     net = slim.batch_norm(net, is_training=is_training, scope=scope + '_bn_2')
-
-    net = slim.conv2d(net, num_outputs=output_depth, kernel_size=[1, 1], activation_fn=None, scope=scope + '_bt2')
 
     net = tf.add(previous_block, net, name=scope + '_add')
     net = tf.nn.relu(net, name=scope + '_final_relu')
@@ -96,40 +89,37 @@ def ShallowSeg(inputs, num_classes, reuse=None, is_training=True, scope='Shallow
         # Set the primary arg scopes. Fused batch_norm is faster than normal batch norm.
         with slim.arg_scope([downsampling_block, convolution_block], is_training=is_training), \
              slim.arg_scope([slim.batch_norm], fused=True):
-            net = downsampling_block(inputs, num_internal_outputs=13, crelu=True,
-                                     scope='downsampling_block_1')  # Output 32 at 1/2 res
-            net = convolution_block(net, bt_output=16, dilation_rate=1,
-                                    scope='convolution_block_1')  # Output 32 at 1/2 res
+            net = downsampling_block(inputs, num_internal_outputs=29, final=False, scope='downsampling_block_1')
+            net = convolution_block(net, num_outputs=64, internal_depth_multiplier=2, dilation_rate=1,
+                                    scope='convolution_block_1')
 
-            net = downsampling_block(net, num_internal_outputs=32, crelu=True,
-                                     scope='downsampling_block_2')  # Output 128 at 1/4 res
-            net = convolution_block(net, bt_output=32, dilation_rate=1,
-                                    scope='convolution_block_2')  # Output 128 at 1/4 res
+            net = downsampling_block(net, num_internal_outputs=64, final=False, scope='downsampling_block_2')
+            net = convolution_block(net, num_outputs=256, internal_depth_multiplier=2, dilation_rate=1,
+                                    scope='convolution_block_2')
 
-            net = downsampling_block(net, num_internal_outputs=128, crelu=False,
-                                     scope='downsampling_block_3')  # Output 256 at 1/8 res
-            net = convolution_block(net, bt_output=32, dilation_rate=2,
-                                    scope='convolution_block_3_dilated_2')  # Output 256 at 1/8 res
-            net = convolution_block(net, bt_output=32, dilation_rate=4,
-                                    scope='convolution_block_4_dilated_4')  # Output 256 at 1/8 res
-            net = convolution_block(net, bt_output=32, dilation_rate=8,
-                                    scope='convolution_block_5_dilated_8')  # Output 256 at 1/8 res
-            net = convolution_block(net, bt_output=32, dilation_rate=2,
-                                    scope='convolution_block_6_dilated_2')  # Output 256 at 1/8 res
-            net = convolution_block(net, bt_output=32, dilation_rate=4,
-                                    scope='convolution_block_7_dilated_4')  # Output 256 at 1/8 res
-            net = convolution_block(net, bt_output=32, dilation_rate=8,
-                                    scope='convolution_block_8_dilated_8')  # Output 256 at 1/8 res
+            net = downsampling_block(net, num_internal_outputs=256, final=True, scope='downsampling_block_3')
+            net = convolution_block(net, num_outputs=256, internal_depth_multiplier=1, dilation_rate=2,
+                                    scope='convolution_block_3_dilated_2')
+            net = convolution_block(net, num_outputs=256, internal_depth_multiplier=1, dilation_rate=4,
+                                    scope='convolution_block_4_dilated_4')
+            net = convolution_block(net, num_outputs=256, internal_depth_multiplier=1, dilation_rate=8,
+                                    scope='convolution_block_5_dilated_8')
+            net = convolution_block(net, num_outputs=256, internal_depth_multiplier=1, dilation_rate=2,
+                                    scope='convolution_block_6_dilated_2')
+            net = convolution_block(net, num_outputs=256, internal_depth_multiplier=1, dilation_rate=4,
+                                    scope='convolution_block_7_dilated_4')
 
             net = upsampling_block(net, num_outputs=128, scope='deconvolution_1')
-            net = convolution_block(net, bt_output=32, dilation_rate=1, scope='convolution_block_9')
+            net = convolution_block(net, num_outputs=128, internal_depth_multiplier=2, dilation_rate=1,
+                                    scope='convolution_block_8')
 
             net = upsampling_block(net, num_outputs=64, scope='deconvolution_2')
-            net = convolution_block(net, bt_output=16, dilation_rate=1, scope='convolution_block_10')
+            net = convolution_block(net, num_outputs=64, internal_depth_multiplier=2, dilation_rate=1,
+                                    scope='convolution_block_9')
 
         logits = slim.conv2d_transpose(net, num_outputs=num_classes, kernel_size=[3, 3], stride=2, activation_fn=None,
-                                       scope='deconvolution_3_conv')
-        probabilities = tf.nn.softmax(logits, name='deconvolution_3_probabilities')
+                                       scope='deconvolution_3' + '_conv')
+        probabilities = tf.nn.softmax(logits, name='deconvolution_3' + '_probabilities')
 
         print(logits.get_shape().as_list())
         print(probabilities.get_shape().as_list())
