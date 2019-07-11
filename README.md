@@ -4,9 +4,9 @@ This repository contains the ShallowSeg model for efficient semantic segmentatio
 
 ShallowSeg follows a ResNet approach with bottleneck modules and makes use of the Concatenated ReLU activation as an efficient means to increase output channel quantity of a convolution, with minimal computation.
 
-![Downsampling Blocks](https://raw.githubusercontent.com/michaeltinsley/shallowseg/main/readme_images/downsampling_blocks.png)
+![Downsampling Blocks](https://raw.githubusercontent.com/michaeltinsley/shallowseg/tree/readme_images/downsampling_blocks.png)
 
-![Convolution Blocks](https://raw.githubusercontent.com/michaeltinsley/shallowseg/main/readme_images/convolution_blocks.png)
+![Convolution Blocks](https://raw.githubusercontent.com/michaeltinsley/shallowseg/tree/readme_images/convolution_blocks.png)
 
 
 ## Implementation
